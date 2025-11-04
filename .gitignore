@@ -1,0 +1,8 @@
+# .gitignore
+.env.php
+.env
+*.log
+/temp/
+/tmp/
+.idea/
+.vscode/

@@ -90,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Student Portal</title>
     <!-- Google Maps API (Replace YOUR_API_KEY) -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places"></script>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA0tqewtVtHePHybBaUzxaBZsJMcaQy2Sg&libraries=places"></script>
     <style>
         * { margin:0; padding:0; box-sizing:border-box; }
         body {
@@ -533,3 +533,4 @@ document.getElementById('viewLink').onclick = (e) => {
 </script>
 </body>
 </html>
+

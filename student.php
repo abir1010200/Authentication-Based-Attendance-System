@@ -1,14 +1,20 @@
 <?php
-// student.php - Student Portal with Geolocation + Google Maps
-$db_host = getenv('DB_HOST') ?: die('DB_HOST missing');
-$db_port = (int)(getenv('DB_PORT') ?: 3306);
-$db_name = getenv('DB_NAME') ?: die('DB_NAME missing');
-$db_user = getenv('DB_USER') ?: die('DB_USER missing');
-$db_pass = getenv('DB_PASS') ?: die('DB_PASS missing');
+// =============== student.php (FULL & FINAL) ===============
+// Works on any PHP server (XAMPP, 000webhost, Hostinger, etc.)
+// Google Maps API Key = AIzaSyA0tqewtVtHePHybBaUzxaBZsJMcaQy2Sg
+// ------------------------------------------------------------
+
+$db_host = getenv('DB_HOST') ?: 'localhost';
+$db_port = 3306;
+$db_name = getenv('DB_NAME') ?: 'attendance_db';
+$db_user = getenv('DB_USER') ?: 'root';
+$db_pass = getenv('DB_PASS') ?: '';
 
 try {
     $pdo = new PDO("mysql:host=$db_host;port=$db_port;dbname=$db_name;charset=utf8mb4", $db_user, $db_pass);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+    // Create tables (run once)
     $pdo->exec("CREATE TABLE IF NOT EXISTS temp_attendance (
         id INT AUTO_INCREMENT PRIMARY KEY,
         subject_code VARCHAR(20) NOT NULL,
@@ -17,6 +23,7 @@ try {
         digit INT NOT NULL,
         ts DATETIME NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
+
     $pdo->exec("CREATE TABLE IF NOT EXISTS attendance (
         id INT AUTO_INCREMENT PRIMARY KEY,
         roll_no INT NOT NULL,
@@ -28,57 +35,51 @@ try {
         lng DECIMAL(11,8) NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
 } catch (Exception $e) {
-    die("Database error: " . htmlspecialchars($e->getMessage()));
+    die("DB Error: " . htmlspecialchars($e->getMessage()));
 }
 
-// Mark attendance
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'mark_attendance') {
+// -------------------- MARK ATTENDANCE --------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'mark_attendance') {
     header('Content-Type: application/json');
     $roll_no = (int)($_POST['roll_no'] ?? 0);
     $subject = strtoupper(trim($_POST['subject'] ?? ''));
-    $room = strtoupper(trim($_POST['room'] ?? ''));
-    $digit = (int)($_POST['digit'] ?? -1);
-    $lat = $_POST['lat'] ?? null;
-    $lng = $_POST['lng'] ?? null;
+    $room    = strtoupper(trim($_POST['room'] ?? ''));
+    $digit   = (int)($_POST['digit'] ?? -1);
+    $lat     = $_POST['lat'] ?? null;
+    $lng     = $_POST['lng'] ?? null;
 
-    if ($digit < 0 || $digit > 9 || $roll_no < 1 || $roll_no > 100 || empty($subject) || empty($room)) {
-        echo json_encode(['success' => false, 'message' => 'Invalid data.']);
+    if ($digit < 0 || $digit > 9 || $roll_no < 1 || $roll_no > 100 || !$subject || !$room) {
+        echo json_encode(['success'=>false, 'message'=>'Invalid data']);
         exit;
     }
 
-    $now = date('Y-m-d H:i:s');
-    $cutoff = date('Y-m-d H:i:s', strtotime('-10 seconds'));
+    $now     = date('Y-m-d H:i:s');
+    $cutoff  = date('Y-m-d H:i:s', strtotime('-10 seconds'));
 
-    try {
-        $check = $pdo->prepare("
-            SELECT digit, ts FROM temp_attendance
-            WHERE subject_code = ? AND room_no = ? AND roll_no = ?
-            AND ts BETWEEN ? AND ?
-        ");
-        $check->execute([$subject, $room, $roll_no, $cutoff, $now]);
-        $row = $check->fetch(PDO::FETCH_ASSOC);
+    $check = $pdo->prepare("SELECT digit FROM temp_attendance 
+                            WHERE subject_code=? AND room_no=? AND roll_no=? 
+                            AND ts BETWEEN ? AND ?");
+    $check->execute([$subject, $room, $roll_no, $cutoff, $now]);
+    $row = $check->fetch(PDO::FETCH_ASSOC);
 
-        if ($row && $row['digit'] == $digit) {
-            $insert = $pdo->prepare("
-                INSERT INTO attendance (roll_no, subject_code, attendance_date, attendance_time, ts, lat, lng)
-                VALUES (?, ?, DATE(?), TIME(?), ?, ?, ?)
-            ");
-            $insert->execute([$roll_no, $subject, $now, $now, $now, $lat, $lng]);
-            $last_id = $pdo->lastInsertId();
+    if ($row && $row['digit'] == $digit) {
+        $ins = $pdo->prepare("INSERT INTO attendance 
+            (roll_no, subject_code, attendance_date, attendance_time, ts, lat, lng)
+            VALUES (?, ?, DATE(?), TIME(?), ?, ?, ?)");
+        $ins->execute([$roll_no, $subject, $now, $now, $now, $lat, $lng]);
+        $id = $pdo->lastInsertId();
 
-            $delete = $pdo->prepare("DELETE FROM temp_attendance WHERE subject_code = ? AND room_no = ? AND roll_no = ?");
-            $delete->execute([$subject, $room, $roll_no]);
+        $pdo->prepare("DELETE FROM temp_attendance 
+                       WHERE subject_code=? AND room_no=? AND roll_no=?")
+            ->execute([$subject, $room, $roll_no]);
 
-            echo json_encode([
-                'success' => true,
-                'message' => "Attendance marked! (ID: $last_id)",
-                'location' => $lat && $lng ? "Location recorded" : "No location"
-            ]);
-        } else {
-            echo json_encode(['success' => false, 'message' => 'Digit mismatch or expired. Try again.']);
-        }
-    } catch (Exception $e) {
-        echo json_encode(['success' => false, 'message' => 'Error: ' . $e->getMessage()]);
+        echo json_encode([
+            'success'=>true,
+            'message'=>"Attendance marked! (ID: $id)",
+            'location'=> $lat ? "Location saved" : "No GPS"
+        ]);
+    } else {
+        echo json_encode(['success'=>false, 'message'=>'Wrong digit or expired']);
     }
     exit;
 }
@@ -87,450 +88,365 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Student Portal</title>
-    <!-- Google Maps API (Replace YOUR_API_KEY) -->
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA0tqewtVtHePHybBaUzxaBZsJMcaQy2Sg&libraries=places"></script>
+
+    <!-- GOOGLE MAPS (YOUR KEY ALREADY INSERTED) -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyA0tqewtVtHePHybBaUzxaBZsJMcaQy2Sg&callback=initMap" async defer></script>
+
     <style>
-        * { margin:0; padding:0; box-sizing:border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f172a;
-            color: #f1f5f9;
-            min-height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 16px;
-            touch-action: manipulation;
+        :root{
+            --bg:#0f172a;
+            --card:#1e293b;
+            --blue:#60a5fa;
+            --green:#34d399;
+            --red:#f87171;
+            --gray:#94a3b8;
         }
-        .container {
-            background: #1e293b;
-            padding: 32px 24px;
-            border-radius: 24px;
-            width: 100%;
-            max-width: 420px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        *{margin:0;padding:0;box-sizing:border-box;}
+        body{
+            font-family:system-ui,sans-serif;
+            background:var(--bg);
+            color:#f1f5f9;
+            min-height:100vh;
+            display:flex;
+            align-items:center;
+            justify-content:center;
+            padding:16px;
         }
-        h1 {
-            font-size: 2rem;
-            font-weight: 700;
-            text-align: center;
-            margin-bottom: 8px;
-            color: #60a5fa;
+        .box{
+            background:var(--card);
+            padding:32px 24px;
+            border-radius:24px;
+            width:100%;
+            max-width:420px;
+            box-shadow:0 10px 30px rgba(0,0,0,.6);
+            text-align:center;
         }
-        .subtitle {
-            text-align: center;
-            color: #94a3b8;
-            font-size: 0.95rem;
-            margin-bottom: 28px;
+        h1{font-size:2rem;color:var(--blue);margin-bottom:8px;}
+        .sub{font-size:.95rem;color:var(--gray);margin-bottom:24px;}
+        .grid{
+            display:grid;
+            grid-template-columns:1fr 1fr;
+            gap:16px;
+            margin:24px 0;
         }
-        .digit-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            grid-template-rows: repeat(5, 1fr);
-            gap: 16px;
-            margin: 24px 0;
+        .dig{
+            background:rgba(255,255,255,.12);
+            border:2px solid rgba(255,255,255,.25);
+            border-radius:20px;
+            font-size:3rem;
+            font-weight:800;
+            padding:28px;
+            cursor:pointer;
+            user-select:none;
+            transition:.25s;
         }
-        .digit-btn {
-            background: rgba(255,255,255,0.12);
-            border: 2px solid rgba(255,255,255,0.25);
-            border-radius: 20px;
-            font-size: 3rem;
-            font-weight: 800;
-            color: #e2e8f0;
-            padding: 28px;
-            text-align: center;
-            cursor: pointer;
-            transition: all 0.25s ease;
-            user-select: none;
-            aspect-ratio: 1;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            touch-action: manipulation;
+        .dig:active{
+            transform:scale(.94);
+            background:rgba(96,165,250,.4);
+            border-color:var(--blue);
         }
-        .digit-btn:active {
-            transform: scale(0.95);
-            background: rgba(96, 165, 250, 0.4);
-            border-color: #60a5fa;
+        .hint{font-size:.9rem;color:var(--gray);margin:12px 0;}
+        .loc{
+            background:rgba(52,211,153,.2);
+            color:#a7f3d0;
+            padding:10px;
+            border-radius:12px;
+            font-size:.85rem;
+            margin:16px 0;
         }
-        .digit-btn:hover {
-            background: rgba(96, 165, 250, 0.3);
-            border-color: #60a5fa;
+        .btn{
+            background:#10b981;
+            color:#fff;
+            border:none;
+            padding:12px 20px;
+            border-radius:16px;
+            font-weight:600;
+            cursor:pointer;
+            margin-top:8px;
         }
-        .hint {
-            font-size: 0.9rem;
-            color: #94a3b8;
-            text-align: center;
-            margin-top: 12px;
+        .link{
+            display:block;
+            margin-top:28px;
+            color:var(--blue);
+            text-decoration:none;
+            font-weight:500;
         }
-        .location-status {
-            text-align: center;
-            font-size: 0.85rem;
-            margin: 16px 0;
-            padding: 8px;
-            border-radius: 12px;
-            background: rgba(52, 211, 153, 0.15);
+        .modal{
+            display:none;
+            position:fixed;
+            inset:0;
+            background:rgba(0,0,0,.8);
+            align-items:center;
+            justify-content:center;
+            padding:20px;
+            z-index:999;
         }
-        .map-btn {
-            display: block;
-            margin: 16px auto 0;
-            padding: 12px 20px;
-            background: #10b981;
-            color: white;
-            border: none;
-            border-radius: 16px;
-            font-weight: 600;
-            cursor: pointer;
+        .mcard{
+            background:var(--card);
+            padding:28px;
+            border-radius:24px;
+            width:100%;
+            max-width:400px;
+            position:relative;
         }
-        .view-link {
-            display: block;
-            text-align: center;
-            margin-top: 28px;
-            color: #60a5fa;
-            font-weight: 500;
-            text-decoration: none;
-            font-size: 1rem;
+        .close{
+            position:absolute;
+            top:12px;right:16px;
+            font-size:32px;
+            color:var(--gray);
+            cursor:pointer;
         }
-        .modal, #regModal, #mapModal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0; top: 0;
-            width: 100%; height: 100%;
-            background: rgba(0,0,0,0.8);
-            justify-content: center;
-            align-items: center;
-            padding: 20px;
+        .close:hover{color:var(--red);}
+        .fg{margin-bottom:18px;}
+        label{display:block;color:#cbd5e1;margin-bottom:8px;font-weight:500;}
+        input{
+            width:100%;
+            padding:14px 16px;
+            font-size:1.1rem;
+            border:2.5px solid rgba(255,255,255,.2);
+            border-radius:16px;
+            background:rgba(255,255,255,.1);
+            color:#fff;
         }
-        .modal-content, .reg-content, .map-content {
-            background: #1e293b;
-            padding: 28px;
-            border-radius: 24px;
-            width: 100%;
-            max-width: 400px;
-            box-shadow: 0 15px 40px rgba(0,0,0,0.6);
-            position: relative;
+        input:focus{
+            outline:none;
+            border-color:var(--blue);
+            box-shadow:0 0 0 4px rgba(96,165,250,.2);
         }
-        #map {
-            height: 300px;
-            width: 100%;
-            border-radius: 16px;
-            margin-top: 16px;
-            border: 3px solid #60a5fa;
+        button[type=submit],#saveRollBtn{
+            background:#3b82f6;
+            color:#fff;
+            border:none;
+            padding:16px;
+            font-size:1.1rem;
+            font-weight:700;
+            border-radius:16px;
+            cursor:pointer;
+            width:100%;
+            margin-top:12px;
         }
-        .close {
-            position: absolute;
-            top: 12px;
-            right: 16px;
-            font-size: 32px;
-            font-weight: bold;
-            color: #94a3b8;
-            cursor: pointer;
-            z-index: 10;
+        .msg{
+            margin-top:16px;
+            padding:12px;
+            border-radius:12px;
+            text-align:center;
+            font-weight:600;
+            display:none;
         }
-        .close:hover { color: #f87171; }
-        .form-group { margin-bottom: 18px; }
-        label {
-            display: block;
-            color: #cbd5e1;
-            font-size: 0.95rem;
-            margin-bottom: 8px;
-            font-weight: 500;
-        }
-        input[type="text"], input[type="number"] {
-            width: 100%;
-            padding: 14px 16px;
-            font-size: 1.1rem;
-            border: 2.5px solid rgba(255,255,255,0.2);
-            border-radius: 16px;
-            background: rgba(255,255,255,0.1);
-            color: white;
-        }
-        input:focus {
-            outline: none;
-            border-color: #60a5fa;
-            box-shadow: 0 0 0 4px rgba(96, 165, 250, 0.2);
-        }
-        button[type="submit"], #saveRollBtn {
-            background: #3b82f6;
-            color: white;
-            border: none;
-            padding: 16px;
-            font-size: 1.1rem;
-            font-weight: 700;
-            border-radius: 16px;
-            cursor: pointer;
-            width: 100%;
-            margin-top: 12px;
-        }
-        button[type="submit"]:hover, #saveRollBtn:hover {
-            background: #2563eb;
-        }
-        .message {
-            margin-top: 16px;
-            padding: 12px;
-            border-radius: 12px;
-            text-align: center;
-            font-weight: 600;
-            font-size: 0.95rem;
+        #map{
+            height:300px;
+            border-radius:16px;
+            margin-top:16px;
+            border:3px solid var(--blue);
         }
     </style>
 </head>
 <body>
-<div class="container">
-    <h1>STUDENT PORTAL</h1>
-    <p class="subtitle">Tap the digit shown in class</p>
 
-    <div class="digit-grid">
-        <?php for ($i = 0; $i <= 9; $i++): ?>
-            <div class="digit-btn" data-digit="<?php echo $i; ?>"><?php echo $i; ?></div>
+<div class="box">
+    <h1>STUDENT PORTAL</h1>
+    <p class="sub">Tap the digit shown in class</p>
+
+    <div class="grid">
+        <?php for($i=0;$i<=9;$i++): ?>
+            <div class="dig" data-digit="<?= $i ?>"><?= $i ?></div>
         <?php endfor; ?>
     </div>
 
-    <div class="hint">Must submit within <strong>10 seconds</strong></div>
-    <div id="locationStatus" class="location-status">Getting your location...</div>
-    <button id="showMapBtn" class="map-btn">View My Location on Map</button>
+    <div class="hint">Must submit within <b>10 seconds</b></div>
+    <div id="loc" class="loc">Getting location…</div>
+    <button id="mapBtn" class="btn">View Live Map</button>
 
-    <a href="view_attendance.php" id="viewLink" class="view-link">View My Attendance →</a>
+    <a href="view_attendance.php" id="viewLink" class="link">View My Attendance →</a>
 </div>
 
-<!-- Registration Modal -->
+<!-- ONE-TIME ROLL MODAL -->
 <div id="regModal" class="modal">
-    <div class="reg-content">
-        <h2 style="color:#60a5fa; text-align:center;">One-Time Setup</h2>
-        <div class="form-group">
+    <div class="mcard">
+        <span class="close">×</span>
+        <h2 style="color:var(--blue)">One-Time Setup</h2>
+        <div class="fg">
             <label>Roll Number (1-100)</label>
-            <input type="number" id="regRoll" min="1" max="100" placeholder="e.g., 67" required>
+            <input type="number" id="regRoll" min="1" max="100" placeholder="67">
         </div>
         <button id="saveRollBtn">Save & Start</button>
-        <div id="regMessage" class="message" style="display:none;"></div>
+        <div id="regMsg" class="msg"></div>
     </div>
 </div>
 
-<!-- Attendance Modal -->
-<div id="attendanceModal" class="modal">
-    <div class="modal-content">
+<!-- ATTENDANCE FORM MODAL -->
+<div id="attModal" class="modal">
+    <div class="mcard">
         <span class="close">×</span>
-        <h2 style="color:#60a5fa; text-align:center;">Class Details</h2>
-        <form id="attendanceForm">
-            <input type="hidden" name="digit" id="modalDigit">
-            <input type="hidden" name="roll_no" id="modalRoll">
-            <input type="hidden" name="lat" id="modalLat">
-            <input type="hidden" name="lng" id="modalLng">
+        <h2 style="color:var(--blue)">Class Details</h2>
+        <form id="attForm">
             <input type="hidden" name="action" value="mark_attendance">
-            <div class="form-group">
+            <input type="hidden" name="digit" id="dig">
+            <input type="hidden" name="roll_no" id="roll">
+            <input type="hidden" name="lat" id="lat">
+            <input type="hidden" name="lng" id="lng">
+
+            <div class="fg">
                 <label>Subject Code</label>
-                <input type="text" name="subject" id="modalSubject" placeholder="CS101" required>
+                <input type="text" name="subject" placeholder="CS101" required>
             </div>
-            <div class="form-group">
+            <div class="fg">
                 <label>Room No</label>
-                <input type="text" name="room" id="modalRoom" placeholder="A-205" required>
+                <input type="text" name="room" placeholder="A-205" required>
             </div>
             <button type="submit">Mark Attendance</button>
-            <div id="modalMessage" class="message" style="display:none;"></div>
+            <div id="attMsg" class="msg"></div>
         </form>
     </div>
 </div>
 
-<!-- Map Modal -->
+<!-- MAP MODAL -->
 <div id="mapModal" class="modal">
-    <div class="map-content">
+    <div class="mcard">
         <span class="close">×</span>
-        <h2 style="color:#60a5fa; text-align:center; margin-bottom:16px;">Your Live Location</h2>
+        <h2 style="color:var(--blue)">Your Live Location</h2>
         <div id="map"></div>
-        <p style="text-align:center; margin-top:12px; color:#94a3b8; font-size:0.9rem;">
-            Accuracy: <span id="accuracy">—</span>m
+        <p style="margin-top:12px;color:var(--gray);font-size:.9rem">
+            Accuracy: <span id="acc">—</span>m
         </p>
     </div>
 </div>
 
 <script>
-let currentLat = null, currentLng = null, map, marker;
-const locationStatus = document.getElementById('locationStatus');
-const mapModal = document.getElementById('mapModal');
-const showMapBtn = document.getElementById('showMapBtn');
+let lat=null, lng=null, map, marker;
+const locDiv = document.getElementById('loc');
+const attForm = document.getElementById('attForm');
 
-// Initialize Google Map
+// ---------- GOOGLE MAP ----------
 function initMap() {
     map = new google.maps.Map(document.getElementById('map'), {
-        zoom: 18,
-        center: { lat: 20.5937, lng: 78.9629 }, // India center
+        zoom: 19,
         mapTypeId: 'satellite',
-        disableDefaultUI: false,
-        styles: [
-            { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] }
-        ]
+        disableDefaultUI: false
     });
     marker = new google.maps.Marker({
-        map: map,
-        icon: {
-            path: google.maps.SymbolPath.CIRCLE,
-            scale: 10,
-            fillColor: '#3b82f6',
-            fillOpacity: 1,
-            strokeWeight: 3,
-            strokeColor: '#1e40af'
-        }
+        map,
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: '#3b82f6', fillOpacity: 1, strokeWeight: 3, strokeColor: '#1e40af' }
     });
 }
 
-// Update Location
-function updateLocation() {
+// ---------- LIVE LOCATION ----------
+function updateLoc() {
     if (!navigator.geolocation) {
-        locationStatus.textContent = "Location not supported";
-        locationStatus.style.background = "rgba(248, 113, 113, 0.2)";
-        locationStatus.style.color = "#fca5a5";
+        locDiv.innerHTML = 'Location not supported';
+        locDiv.style.background = 'rgba(248,113,113,.2)';
         return;
     }
+    navigator.geolocation.watchPosition(pos => {
+        lat = pos.coords.latitude.toFixed(6);
+        lng = pos.coords.longitude.toFixed(6);
+        const acc = Math.round(pos.coords.accuracy);
+        locDiv.innerHTML = `Location ready<br><small>±${acc}m</small>`;
+        locDiv.style.background = 'rgba(52,211,153,.2)';
+        document.getElementById('lat').value = lat;
+        document.getElementById('lng').value = lng;
 
-    navigator.geolocation.watchPosition(
-        (pos) => {
-            currentLat = pos.coords.latitude.toFixed(6);
-            currentLng = pos.coords.longitude.toFixed(6);
-            const acc = Math.round(pos.coords.accuracy);
-
-            locationStatus.innerHTML = `Location ready<br><small>±${acc}m accuracy</small>`;
-            locationStatus.style.background = "rgba(52, 211, 153, 0.2)";
-            locationStatus.style.color = "#a7f3d0";
-
-            document.getElementById('modalLat').value = currentLat;
-            document.getElementById('modalLng').value = currentLng;
-
-            // Update map if open
-            if (map && marker) {
-                const latLng = new google.maps.LatLng(currentLat, currentLng);
-                map.panTo(latLng);
-                marker.setPosition(latLng);
-                document.getElementById('accuracy').textContent = acc;
-            }
-        },
-        (err) => {
-            locationStatus.textContent = "Location denied (still works)";
-            locationStatus.style.background = "rgba(251, 146, 60, 0.2)";
-            locationStatus.style.color = "#fdba74";
-        },
-        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-    );
+        // update map if open
+        if (map) {
+            const p = new google.maps.LatLng(lat, lng);
+            map.panTo(p);
+            marker.setPosition(p);
+            document.getElementById('acc').textContent = acc;
+        }
+    }, () => {
+        locDiv.textContent = 'Location denied (still works)';
+        locDiv.style.background = 'rgba(251,146,60,.2)';
+    }, { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 });
 }
+updateLoc();
+setInterval(updateLoc, 15000);
 
-// Show Map
-showMapBtn.onclick = () => {
-    if (!currentLat || !currentLng) {
-        alert("Location not ready yet. Wait a moment.");
+// ---------- MODALS ----------
+const regModal = document.getElementById('regModal');
+const attModal = document.getElementById('attModal');
+const mapModal = document.getElementById('mapModal');
+
+document.querySelectorAll('.close').forEach(c=>c.onclick=()=>c.closest('.modal').style.display='none');
+window.onclick = e => { if(e.target.classList.contains('modal')) e.target.style.display='none'; };
+
+// ---------- ROLL SAVE ----------
+let roll = localStorage.getItem('student_roll');
+if (!roll) regModal.style.display='flex';
+else document.getElementById('roll').value = roll;
+
+document.getElementById('saveRollBtn').onclick = () => {
+    const r = document.getElementById('regRoll').value.trim();
+    const msg = document.getElementById('regMsg');
+    if (!r || r<1 || r>100) {
+        msg.style.display='block';
+        msg.style.color='#f87171';
+        msg.textContent='Roll 1-100 only';
         return;
     }
-    mapModal.style.display = 'flex';
-    setTimeout(() => {
-        google.maps.event.trigger(map, 'resize');
-        map.setCenter({ lat: parseFloat(currentLat), lng: parseFloat(currentLng) });
-    }, 100);
+    localStorage.setItem('student_roll', r);
+    document.getElementById('roll').value = r;
+    regModal.style.display='none';
+    alert(`Welcome, Roll ${r}!`);
 };
 
-// Close modals
-document.querySelectorAll('.close').forEach(btn => {
-    btn.onclick = () => {
-        btn.closest('.modal').style.display = 'none';
+// ---------- DIGIT CLICK ----------
+document.querySelectorAll('.dig').forEach(d => {
+    d.onclick = () => {
+        document.getElementById('dig').value = d.dataset.digit;
+        document.getElementById('lat').value = lat;
+        document.getElementById('lng').value = lng;
+        attModal.style.display='flex';
+        setTimeout(() => attForm.querySelector('[name=subject]').focus(), 300);
     };
 });
-window.onclick = (e) => {
-    if (e.target.classList.contains('modal')) {
-        e.target.style.display = 'none';
-    }
-};
 
-// Load Google Maps Script
-function loadGoogleMaps() {
-    const script = document.createElement('script');
-    script.src = 'https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap';
-    script.async = true;
-    script.defer = true;
-    document.head.appendChild(script);
-}
-
-// Start everything
-window.onload = () => {
-    updateLocation();
-    setInterval(updateLocation, 15000); // Refresh every 15s
-    loadGoogleMaps();
-
-    const savedRoll = localStorage.getItem('student_roll');
-    if (!savedRoll) {
-        document.getElementById('regModal').style.display = 'flex';
-    } else {
-        document.getElementById('modalRoll').value = savedRoll;
-    }
-};
-
-// Save Roll
-document.getElementById('saveRollBtn').onclick = () => {
-    const roll = document.getElementById('regRoll').value.trim();
-    const msg = document.getElementById('regMessage');
-    if (!roll || roll < 1 || roll > 100) {
-        msg.style.color = '#f87171';
-        msg.textContent = 'Invalid roll number (1-100)';
-        msg.style.display = 'block';
-        return;
-    }
-    localStorage.setItem('student_roll', roll);
-    document.getElementById('modalRoll').value = roll;
-    document.getElementById('regModal').style.display = 'none';
-    setTimeout(() => alert(`Welcome, Roll ${roll}!`), 300);
-};
-
-// Digit click
-document.querySelectorAll('.digit-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-        document.getElementById('modalDigit').value = btn.dataset.digit;
-        document.getElementById('modalLat').value = currentLat;
-        document.getElementById('modalLng').value = currentLng;
-        document.getElementById('attendanceModal').style.display = 'flex';
-        setTimeout(() => document.getElementById('modalSubject').focus(), 300);
-    });
-});
-
-// Submit attendance
-document.getElementById('attendanceForm').onsubmit = async (e) => {
+// ---------- SUBMIT ATTENDANCE ----------
+attForm.onsubmit = async e => {
     e.preventDefault();
-    const msgDiv = document.getElementById('modalMessage');
-    msgDiv.style.display = 'none';
+    const msg = document.getElementById('attMsg');
+    msg.style.display='none';
 
-    const formData = new FormData(e.target);
-    formData.append('lat', currentLat);
-    formData.append('lng', currentLng);
+    const fd = new FormData(attForm);
+    fd.append('lat', lat);
+    fd.append('lng', lng);
 
     try {
-        const resp = await fetch('', { method: 'POST', body: formData });
-        const data = await resp.json();
-        if (data.success) {
-            msgDiv.style.color = '#34d399';
-            msgDiv.innerHTML = `${data.message}<br><small>${data.location}</small>`;
-            setTimeout(() => {
-                document.getElementById('attendanceModal').style.display = 'none';
-                msgDiv.style.display = 'none';
-            }, 3000);
+        const r = await fetch('', {method:'POST', body:fd});
+        const j = await r.json();
+        if (j.success) {
+            msg.style.color = '#34d399';
+            msg.innerHTML = `${j.message}<br><small>${j.location}</small>`;
+            msg.style.display='block';
+            setTimeout(() => { attModal.style.display='none'; msg.style.display='none'; }, 3000);
         } else {
-            msgDiv.style.color = '#f87171';
-            msgDiv.textContent = data.message;
-            msgDiv.style.display = 'block';
+            msg.style.color = '#f87171';
+            msg.textContent = j.message;
+            msg.style.display='block';
         }
-    } catch (err) {
-        msgDiv.style.color = '#f87171';
-        msgDiv.textContent = 'Network error. Try again.';
-        msgDiv.style.display = 'block';
+    } catch {
+        msg.style.color = '#f87171';
+        msg.textContent = 'Network error';
+        msg.style.display='block';
     }
 };
 
-// View attendance
-document.getElementById('viewLink').onclick = (e) => {
-    const roll = localStorage.getItem('student_roll');
-    if (roll) {
+// ---------- MAP BUTTON ----------
+document.getElementById('mapBtn').onclick = () => {
+    if (!lat) { alert('Wait for location…'); return; }
+    mapModal.style.display='flex';
+    setTimeout(() => google.maps.event.trigger(map, 'resize'), 100);
+};
+
+// ---------- VIEW ATTENDANCE LINK ----------
+document.getElementById('viewLink').onclick = e => {
+    const r = localStorage.getItem('student_roll');
+    if (r) {
         e.preventDefault();
-        window.location.href = `view_attendance.php?roll=${roll}`;
+        location.href = `view_attendance.php?roll=${r}`;
     }
 };
 </script>
 </body>
 </html>
-

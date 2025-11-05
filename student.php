@@ -1,5 +1,5 @@
 <?php
-// student.php - Student Portal with Geolocation
+// student.php - Student Portal with Geolocation + Google Maps
 $db_host = getenv('DB_HOST') ?: die('DB_HOST missing');
 $db_port = (int)(getenv('DB_PORT') ?: 3306);
 $db_name = getenv('DB_NAME') ?: die('DB_NAME missing');
@@ -9,8 +9,6 @@ $db_pass = getenv('DB_PASS') ?: die('DB_PASS missing');
 try {
     $pdo = new PDO("mysql:host=$db_host;port=$db_port;dbname=$db_name;charset=utf8mb4", $db_user, $db_pass);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
-
-    // Create tables
     $pdo->exec("CREATE TABLE IF NOT EXISTS temp_attendance (
         id INT AUTO_INCREMENT PRIMARY KEY,
         subject_code VARCHAR(20) NOT NULL,
@@ -19,7 +17,6 @@ try {
         digit INT NOT NULL,
         ts DATETIME NOT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
     $pdo->exec("CREATE TABLE IF NOT EXISTS attendance (
         id INT AUTO_INCREMENT PRIMARY KEY,
         roll_no INT NOT NULL,
@@ -30,7 +27,6 @@ try {
         lat DECIMAL(10,8) NULL,
         lng DECIMAL(11,8) NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;");
-
 } catch (Exception $e) {
     die("Database error: " . htmlspecialchars($e->getMessage()));
 }
@@ -38,7 +34,6 @@ try {
 // Mark attendance
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'mark_attendance') {
     header('Content-Type: application/json');
-
     $roll_no = (int)($_POST['roll_no'] ?? 0);
     $subject = strtoupper(trim($_POST['subject'] ?? ''));
     $room = strtoupper(trim($_POST['room'] ?? ''));
@@ -94,6 +89,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Student Portal</title>
+    <!-- Google Maps API (Replace YOUR_API_KEY) -->
+    <script src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&libraries=places"></script>
     <style>
         * { margin:0; padding:0; box-sizing:border-box; }
         body {
@@ -105,43 +102,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             justify-content: center;
             align-items: center;
             padding: 16px;
+            touch-action: manipulation;
         }
         .container {
             background: #1e293b;
-            padding: 32px;
+            padding: 32px 24px;
             border-radius: 24px;
             width: 100%;
             max-width: 420px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
         h1 {
-            font-size: 1.9rem;
+            font-size: 2rem;
             font-weight: 700;
             text-align: center;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
             color: #60a5fa;
         }
         .subtitle {
             text-align: center;
             color: #94a3b8;
             font-size: 0.95rem;
-            margin-bottom: 24px;
+            margin-bottom: 28px;
         }
         .digit-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             grid-template-rows: repeat(5, 1fr);
-            gap: 14px;
+            gap: 16px;
             margin: 24px 0;
         }
         .digit-btn {
             background: rgba(255,255,255,0.12);
             border: 2px solid rgba(255,255,255,0.25);
-            border-radius: 18px;
-            font-size: 2.4rem;
+            border-radius: 20px;
+            font-size: 3rem;
             font-weight: 800;
             color: #e2e8f0;
-            padding: 24px;
+            padding: 28px;
             text-align: center;
             cursor: pointer;
             transition: all 0.25s ease;
@@ -150,50 +148,87 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             display: flex;
             align-items: center;
             justify-content: center;
+            touch-action: manipulation;
+        }
+        .digit-btn:active {
+            transform: scale(0.95);
+            background: rgba(96, 165, 250, 0.4);
+            border-color: #60a5fa;
         }
         .digit-btn:hover {
             background: rgba(96, 165, 250, 0.3);
             border-color: #60a5fa;
-            transform: translateY(-4px);
-            box-shadow: 0 8px 20px rgba(96, 165, 250, 0.3);
         }
         .hint {
-            font-size: 0.85rem;
+            font-size: 0.9rem;
             color: #94a3b8;
             text-align: center;
-            margin-top: 8px;
+            margin-top: 12px;
         }
         .location-status {
             text-align: center;
-            font-size: 0.8rem;
-            color: #34d399;
-            margin-top: 12px;
+            font-size: 0.85rem;
+            margin: 16px 0;
+            padding: 8px;
+            border-radius: 12px;
+            background: rgba(52, 211, 153, 0.15);
         }
-        .modal, #regModal {
+        .map-btn {
+            display: block;
+            margin: 16px auto 0;
+            padding: 12px 20px;
+            background: #10b981;
+            color: white;
+            border: none;
+            border-radius: 16px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .view-link {
+            display: block;
+            text-align: center;
+            margin-top: 28px;
+            color: #60a5fa;
+            font-weight: 500;
+            text-decoration: none;
+            font-size: 1rem;
+        }
+        .modal, #regModal, #mapModal {
             display: none;
             position: fixed;
             z-index: 1000;
             left: 0; top: 0;
             width: 100%; height: 100%;
-            background: rgba(0,0,0,0.7);
+            background: rgba(0,0,0,0.8);
             justify-content: center;
             align-items: center;
             padding: 20px;
         }
-        .modal-content, .reg-content {
+        .modal-content, .reg-content, .map-content {
             background: #1e293b;
             padding: 28px;
             border-radius: 24px;
             width: 100%;
             max-width: 400px;
-            box-shadow: 0 15px 40px rgba(0,0,0,0.5);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.6);
+            position: relative;
+        }
+        #map {
+            height: 300px;
+            width: 100%;
+            border-radius: 16px;
+            margin-top: 16px;
+            border: 3px solid #60a5fa;
         }
         .close {
-            float: right;
-            font-size: 28px;
+            position: absolute;
+            top: 12px;
+            right: 16px;
+            font-size: 32px;
             font-weight: bold;
             color: #94a3b8;
             cursor: pointer;
+            z-index: 10;
         }
         .close:hover { color: #f87171; }
         .form-group { margin-bottom: 18px; }
@@ -212,7 +247,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             border-radius: 16px;
             background: rgba(255,255,255,0.1);
             color: white;
-            transition: 0.3s;
         }
         input:focus {
             outline: none;
@@ -230,11 +264,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             cursor: pointer;
             width: 100%;
             margin-top: 12px;
-            transition: 0.3s;
         }
         button[type="submit"]:hover, #saveRollBtn:hover {
             background: #2563eb;
-            transform: translateY(-2px);
         }
         .message {
             margin-top: 16px;
@@ -244,22 +276,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             font-weight: 600;
             font-size: 0.95rem;
         }
-        .view-link {
-            display: block;
-            text-align: center;
-            margin-top: 24px;
-            color: #60a5fa;
-            font-weight: 500;
-            text-decoration: none;
-        }
-        .view-link:hover { text-decoration: underline; }
     </style>
 </head>
 <body>
 <div class="container">
     <h1>STUDENT PORTAL</h1>
     <p class="subtitle">Tap the digit shown in class</p>
-    
+
     <div class="digit-grid">
         <?php for ($i = 0; $i <= 9; $i++): ?>
             <div class="digit-btn" data-digit="<?php echo $i; ?>"><?php echo $i; ?></div>
@@ -267,8 +290,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     </div>
 
     <div class="hint">Must submit within <strong>10 seconds</strong></div>
-    <div id="locationStatus" class="location-status">Getting location...</div>
-    
+    <div id="locationStatus" class="location-status">Getting your location...</div>
+    <button id="showMapBtn" class="map-btn">View My Location on Map</button>
+
     <a href="view_attendance.php" id="viewLink" class="view-link">View My Attendance →</a>
 </div>
 
@@ -296,7 +320,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             <input type="hidden" name="lat" id="modalLat">
             <input type="hidden" name="lng" id="modalLng">
             <input type="hidden" name="action" value="mark_attendance">
-
             <div class="form-group">
                 <label>Subject Code</label>
                 <input type="text" name="subject" id="modalSubject" placeholder="CS101" required>
@@ -311,68 +334,148 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     </div>
 </div>
 
-<script>
-// Geolocation
-let currentLat = null, currentLng = null;
-const locationStatus = document.getElementById('locationStatus');
+<!-- Map Modal -->
+<div id="mapModal" class="modal">
+    <div class="map-content">
+        <span class="close">×</span>
+        <h2 style="color:#60a5fa; text-align:center; margin-bottom:16px;">Your Live Location</h2>
+        <div id="map"></div>
+        <p style="text-align:center; margin-top:12px; color:#94a3b8; font-size:0.9rem;">
+            Accuracy: <span id="accuracy">—</span>m
+        </p>
+    </div>
+</div>
 
+<script>
+let currentLat = null, currentLng = null, map, marker;
+const locationStatus = document.getElementById('locationStatus');
+const mapModal = document.getElementById('mapModal');
+const showMapBtn = document.getElementById('showMapBtn');
+
+// Initialize Google Map
+function initMap() {
+    map = new google.maps.Map(document.getElementById('map'), {
+        zoom: 18,
+        center: { lat: 20.5937, lng: 78.9629 }, // India center
+        mapTypeId: 'satellite',
+        disableDefaultUI: false,
+        styles: [
+            { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] }
+        ]
+    });
+    marker = new google.maps.Marker({
+        map: map,
+        icon: {
+            path: google.maps.SymbolPath.CIRCLE,
+            scale: 10,
+            fillColor: '#3b82f6',
+            fillOpacity: 1,
+            strokeWeight: 3,
+            strokeColor: '#1e40af'
+        }
+    });
+}
+
+// Update Location
 function updateLocation() {
     if (!navigator.geolocation) {
         locationStatus.textContent = "Location not supported";
-        locationStatus.style.color = "#f87171";
+        locationStatus.style.background = "rgba(248, 113, 113, 0.2)";
+        locationStatus.style.color = "#fca5a5";
         return;
     }
 
-    navigator.geolocation.getCurrentPosition(
+    navigator.geolocation.watchPosition(
         (pos) => {
             currentLat = pos.coords.latitude.toFixed(6);
             currentLng = pos.coords.longitude.toFixed(6);
-            locationStatus.textContent = "Location ready";
-            locationStatus.style.color = "#34d399";
+            const acc = Math.round(pos.coords.accuracy);
+
+            locationStatus.innerHTML = `Location ready<br><small>±${acc}m accuracy</small>`;
+            locationStatus.style.background = "rgba(52, 211, 153, 0.2)";
+            locationStatus.style.color = "#a7f3d0";
+
             document.getElementById('modalLat').value = currentLat;
             document.getElementById('modalLng').value = currentLng;
+
+            // Update map if open
+            if (map && marker) {
+                const latLng = new google.maps.LatLng(currentLat, currentLng);
+                map.panTo(latLng);
+                marker.setPosition(latLng);
+                document.getElementById('accuracy').textContent = acc;
+            }
         },
-        () => {
+        (err) => {
             locationStatus.textContent = "Location denied (still works)";
-            locationStatus.style.color = "#fb923c";
+            locationStatus.style.background = "rgba(251, 146, 60, 0.2)";
+            locationStatus.style.color = "#fdba74";
         },
-        { timeout: 10000, maximumAge: 60000, enableHighAccuracy: true }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
 }
 
-// Run on load
-updateLocation();
-setInterval(updateLocation, 30000); // Refresh every 30s
+// Show Map
+showMapBtn.onclick = () => {
+    if (!currentLat || !currentLng) {
+        alert("Location not ready yet. Wait a moment.");
+        return;
+    }
+    mapModal.style.display = 'flex';
+    setTimeout(() => {
+        google.maps.event.trigger(map, 'resize');
+        map.setCenter({ lat: parseFloat(currentLat), lng: parseFloat(currentLng) });
+    }, 100);
+};
 
-// Modals
-const regModal = document.getElementById('regModal');
-const attendanceModal = document.getElementById('attendanceModal');
-const closeBtn = document.querySelector('.close');
-const form = document.getElementById('attendanceForm');
-let savedRoll = localStorage.getItem('student_roll');
+// Close modals
+document.querySelectorAll('.close').forEach(btn => {
+    btn.onclick = () => {
+        btn.closest('.modal').style.display = 'none';
+    };
+});
+window.onclick = (e) => {
+    if (e.target.classList.contains('modal')) {
+        e.target.style.display = 'none';
+    }
+};
 
-if (!savedRoll) {
-    regModal.style.display = 'flex';
-} else {
-    document.getElementById('modalRoll').value = savedRoll;
+// Load Google Maps Script
+function loadGoogleMaps() {
+    const script = document.createElement('script');
+    script.src = 'https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap';
+    script.async = true;
+    script.defer = true;
+    document.head.appendChild(script);
 }
+
+// Start everything
+window.onload = () => {
+    updateLocation();
+    setInterval(updateLocation, 15000); // Refresh every 15s
+    loadGoogleMaps();
+
+    const savedRoll = localStorage.getItem('student_roll');
+    if (!savedRoll) {
+        document.getElementById('regModal').style.display = 'flex';
+    } else {
+        document.getElementById('modalRoll').value = savedRoll;
+    }
+};
 
 // Save Roll
 document.getElementById('saveRollBtn').onclick = () => {
     const roll = document.getElementById('regRoll').value.trim();
     const msg = document.getElementById('regMessage');
-    msg.style.display = 'none';
-
     if (!roll || roll < 1 || roll > 100) {
         msg.style.color = '#f87171';
         msg.textContent = 'Invalid roll number (1-100)';
         msg.style.display = 'block';
         return;
     }
-
     localStorage.setItem('student_roll', roll);
     document.getElementById('modalRoll').value = roll;
-    regModal.style.display = 'none';
+    document.getElementById('regModal').style.display = 'none';
     setTimeout(() => alert(`Welcome, Roll ${roll}!`), 300);
 };
 
@@ -382,41 +485,29 @@ document.querySelectorAll('.digit-btn').forEach(btn => {
         document.getElementById('modalDigit').value = btn.dataset.digit;
         document.getElementById('modalLat').value = currentLat;
         document.getElementById('modalLng').value = currentLng;
-        attendanceModal.style.display = 'flex';
+        document.getElementById('attendanceModal').style.display = 'flex';
         setTimeout(() => document.getElementById('modalSubject').focus(), 300);
     });
 });
 
-// Close modal
-closeBtn.onclick = () => {
-    attendanceModal.style.display = 'none';
-    document.getElementById('modalMessage').style.display = 'none';
-};
-window.onclick = (e) => {
-    if (e.target === attendanceModal || e.target === regModal) {
-        e.target.style.display = 'none';
-    }
-};
-
 // Submit attendance
-form.onsubmit = async (e) => {
+document.getElementById('attendanceForm').onsubmit = async (e) => {
     e.preventDefault();
     const msgDiv = document.getElementById('modalMessage');
     msgDiv.style.display = 'none';
 
-    const formData = new FormData(form);
+    const formData = new FormData(e.target);
     formData.append('lat', currentLat);
     formData.append('lng', currentLng);
 
     try {
         const resp = await fetch('', { method: 'POST', body: formData });
         const data = await resp.json();
-
         if (data.success) {
             msgDiv.style.color = '#34d399';
             msgDiv.innerHTML = `${data.message}<br><small>${data.location}</small>`;
             setTimeout(() => {
-                attendanceModal.style.display = 'none';
+                document.getElementById('attendanceModal').style.display = 'none';
                 msgDiv.style.display = 'none';
             }, 3000);
         } else {
@@ -431,11 +522,12 @@ form.onsubmit = async (e) => {
     }
 };
 
-// View attendance link
+// View attendance
 document.getElementById('viewLink').onclick = (e) => {
-    if (savedRoll) {
+    const roll = localStorage.getItem('student_roll');
+    if (roll) {
         e.preventDefault();
-        window.location.href = `view_attendance.php?roll=${savedRoll}`;
+        window.location.href = `view_attendance.php?roll=${roll}`;
     }
 };
 </script>
